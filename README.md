@@ -46,7 +46,7 @@
 - **Data/Compute**: In-memory sessions, optional Dask ecosystem libs
 ---
 ## 🏗️ System Architecture
-![achi](screenshots/Bigarchi1.png)
+![achi](screenshots/Bigarchi1.jpeg)
 ![achi](screenshots/Bigarchi2.png)
 ---
 ## 📸 Screenshots
