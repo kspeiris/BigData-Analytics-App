@@ -20,7 +20,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Custom JSON encoder to handle NumPy and Pandas types
 class NumpyEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, (np.integer, np.int64, np.int32, np.int8)):
@@ -43,10 +42,8 @@ app = Flask(__name__)
 app.json_encoder = NumpyEncoder
 CORS(app)
 
-# Configuration
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024
 
-# In-memory storage for active sessions
 active_datasets = {}
 
 def convert_numpy_types(obj):
@@ -112,8 +109,6 @@ def upload_file():
             file_size = file.tell()
             file.seek(0)
             
-            # Flask uploads are file-like streams; pandas can read them directly.
-            # Using pandas for both sizes avoids dask path/startswith errors.
             df = pd.read_csv(file.stream, low_memory=False)
             data = df.to_dict('records')
             columns = df.columns.tolist()
@@ -128,7 +123,6 @@ def upload_file():
         else:
             return jsonify({"error": "Unsupported file format. Use CSV or JSON"}), 400
 
-        # Store in memory with session ID
         session_id = datetime.now().strftime("%Y%m%d%H%M%S%f")
         active_datasets[session_id] = {
             'data': data,
@@ -138,7 +132,6 @@ def upload_file():
             'upload_time': datetime.now().isoformat()
         }
 
-        # Basic statistics
         numeric_columns = [col for col in columns if pd.api.types.is_numeric_dtype(df[col])]
         basic_stats = {}
         
@@ -152,7 +145,6 @@ def upload_file():
                 'count': int(df[col].count())
             }
 
-        # Categorical columns analysis
         categorical_columns = [col for col in columns if col not in numeric_columns]
         categorical_stats = {}
         
@@ -195,7 +187,6 @@ def basic_analysis():
         dataset = active_datasets[session_id]
         df = pd.DataFrame(dataset['data'])
         
-        # Convert all numpy types to native Python types
         description_dict = {}
         for col, stats in df.describe().to_dict().items():
             description_dict[col] = {}
@@ -232,7 +223,6 @@ def correlation_analysis():
         dataset = active_datasets[session_id]
         df = pd.DataFrame(dataset['data'])
         
-        # Select only numeric columns for correlation
         numeric_df = df.select_dtypes(include=[np.number])
         
         if numeric_df.shape[1] < 2:
@@ -240,7 +230,6 @@ def correlation_analysis():
             
         correlation_matrix = numeric_df.corr().round(4)
         
-        # Convert matrix to list with native types
         matrix_list = []
         for row in correlation_matrix.values:
             matrix_list.append([float(x) for x in row])
@@ -251,7 +240,6 @@ def correlation_analysis():
             "strong_correlations": []
         }
         
-        # Find strong correlations (absolute value > 0.7)
         for i, col1 in enumerate(correlation_matrix.columns):
             for j, col2 in enumerate(correlation_matrix.columns):
                 if i < j and abs(correlation_matrix.iloc[i, j]) > 0.7:
@@ -280,7 +268,6 @@ def clustering_analysis():
         dataset = active_datasets[session_id]
         df = pd.DataFrame(dataset['data'])
         
-        # Select specified numeric columns
         if not columns:
             numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
             columns = numeric_cols[:2] if len(numeric_cols) >= 2 else numeric_cols
@@ -288,21 +275,17 @@ def clustering_analysis():
         if len(columns) < 2:
             return jsonify({"error": "Need at least 2 numeric columns for clustering"}), 400
         
-        # Remove rows with missing values
         X = df[columns].dropna().values
         
         if len(X) < n_clusters:
             return jsonify({"error": "Not enough data points for clustering"}), 400
         
-        # Standardize the data
         scaler = StandardScaler()
         X_scaled = scaler.fit_transform(X)
         
-        # Perform K-means clustering
         kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
         clusters = kmeans.fit_predict(X_scaled)
         
-        # Convert all numpy arrays to lists with native types
         data_points = []
         for point in X:
             data_points.append([float(x) for x in point])
@@ -343,19 +326,16 @@ def scatter_plot():
         print(f"Available columns: {df.columns.tolist()}")
         print(f"Data types: {df.dtypes.to_dict()}")
         
-        # Check if columns exist
         if x_col not in df.columns:
             return jsonify({"error": f"X column '{x_col}' not found in dataset"}), 400
         if y_col not in df.columns:
             return jsonify({"error": f"Y column '{y_col}' not found in dataset"}), 400
         
-        # Check if columns are numeric
         if not pd.api.types.is_numeric_dtype(df[x_col]):
             return jsonify({"error": f"X column '{x_col}' is not numeric"}), 400
         if not pd.api.types.is_numeric_dtype(df[y_col]):
             return jsonify({"error": f"Y column '{y_col}' is not numeric"}), 400
         
-        # Remove rows with missing values in these columns
         plot_data = df[[x_col, y_col]].dropna()
         
         if len(plot_data) == 0:
@@ -363,7 +343,6 @@ def scatter_plot():
         
         print(f"Plotting {len(plot_data)} data points")
         
-        # Create the plot
         plt.figure(figsize=(10, 6))
         plt.scatter(plot_data[x_col], plot_data[y_col], alpha=0.6, s=50)
         plt.xlabel(x_col, fontsize=12)
@@ -371,13 +350,11 @@ def scatter_plot():
         plt.title(f'{y_col} vs {x_col}', fontsize=14)
         plt.grid(True, alpha=0.3)
         
-        # Save plot to bytes
         img_bytes = io.BytesIO()
         plt.savefig(img_bytes, format='png', dpi=100, bbox_inches='tight')
         img_bytes.seek(0)
         plt.close()
         
-        # Encode image to base64
         img_base64 = base64.b64encode(img_bytes.read()).decode('utf-8')
         
         return jsonify({
@@ -406,13 +383,11 @@ def trend_analysis():
         if column not in df.columns:
             return jsonify({"error": "Column not found"}), 400
         
-        # Simple trend analysis
         series = pd.to_numeric(df[column], errors='coerce').dropna()
         
         if len(series) < 2:
             return jsonify({"error": "Not enough data points for trend analysis"}), 400
         
-        # Calculate trend line
         x = np.arange(len(series))
         slope, intercept = np.polyfit(x, series.values, 1)
         trend_line = slope * x + intercept
@@ -472,7 +447,6 @@ def outlier_analysis():
         row_outlier_mask = z_outlier_mask.any(axis=1)
         outlier_rows = df[row_outlier_mask].head(50).to_dict('records')
 
-        # IsolationForest gives a stronger row-level outlier signal across all numeric columns.
         iso_rows = numeric_df.dropna()
         isolation_summary = {"rows_scored": 0, "anomalies": 0, "anomaly_percent": 0.0}
         if len(iso_rows) >= 10:
@@ -584,7 +558,6 @@ def charts_analysis():
             except Exception:
                 return None
 
-        # Build filter metadata from full dataset
         all_columns = full_df.columns.tolist()
         all_numeric_cols = full_df.select_dtypes(include=[np.number]).columns.tolist()
         all_categorical_cols = [c for c in all_columns if c not in all_numeric_cols]
@@ -630,7 +603,6 @@ def charts_analysis():
                     "max": valid.max().date().isoformat()
                 })
 
-        # Apply filters to create a linked filtered dataframe for all charts
         df = full_df.copy()
 
         range_filter = filters.get("range", {}) if isinstance(filters, dict) else {}
@@ -697,7 +669,6 @@ def charts_analysis():
         numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
         categorical_cols = [c for c in columns if c not in numeric_cols]
 
-        # Missing value profile
         missing_values = []
         for col in columns:
             missing = int(df[col].isna().sum())
@@ -708,7 +679,6 @@ def charts_analysis():
             })
         missing_values = sorted(missing_values, key=lambda x: x["missing"], reverse=True)
 
-        # Numeric distributions (histogram bins)
         distributions = []
         for col in numeric_cols[:6]:
             series = pd.to_numeric(df[col], errors='coerce').dropna()
@@ -728,7 +698,6 @@ def charts_analysis():
                 "bins": bins
             })
 
-        # Box plot stats
         boxplot_stats = []
         for col in numeric_cols[:10]:
             series = pd.to_numeric(df[col], errors='coerce').dropna()
@@ -745,7 +714,6 @@ def charts_analysis():
                 "std": float(series.std()) if len(series) > 1 else 0.0
             })
 
-        # Correlation matrix (chart-friendly rows)
         correlation = {"columns": [], "matrix": []}
         if len(numeric_cols) >= 2:
             corr_df = df[numeric_cols[:10]].corr().round(4)
@@ -754,7 +722,6 @@ def charts_analysis():
                 "matrix": [[float(x) for x in row] for row in corr_df.values]
             }
 
-        # Scatter pairs (sampled)
         scatter_pairs = []
         if len(numeric_cols) >= 2:
             candidate_cols = numeric_cols[:5]
@@ -778,7 +745,6 @@ def charts_analysis():
                 if pair_count >= 4:
                     break
 
-        # Categorical distributions
         categorical_breakdown = []
         for col in categorical_cols[:6]:
             value_counts = df[col].astype(str).value_counts().head(8)
@@ -790,7 +756,6 @@ def charts_analysis():
                 "values": values
             })
 
-        # Trend lines for first few numeric columns (sampled index)
         trend_series = []
         for col in numeric_cols[:3]:
             series = pd.to_numeric(df[col], errors='coerce')
@@ -801,7 +766,6 @@ def charts_analysis():
             points = [{"index": int(i), "value": float(v)} for i, v in enumerate(sampled.values)]
             trend_series.append({"column": col, "points": points})
 
-        # PCA variance quick view
         pca_variance = []
         if len(numeric_cols) >= 2:
             pca_df = df[numeric_cols].dropna()
