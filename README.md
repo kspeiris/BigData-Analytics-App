@@ -44,7 +44,10 @@
 - **Frontend**: React, Axios, Recharts, React Dropzone
 - **Backend**: Flask, Pandas, NumPy, Scikit-learn, Matplotlib
 - **Data/Compute**: In-memory sessions, optional Dask ecosystem libs
-
+---
+## 🏗️ System Architecture
+![achi](screenshots/Bigarchi1.png)
+![achi](screenshots/Bigarchi2.png)
 ---
 ## 📸 Screenshots
 ![images](screenshots/image1.png)
