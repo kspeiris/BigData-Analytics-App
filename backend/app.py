@@ -10,6 +10,8 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+from sklearn.ensemble import IsolationForest
 from datetime import datetime
 import traceback
 import os
@@ -425,6 +427,135 @@ def trend_analysis():
         
         return jsonify(results)
     
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/analyze/outliers', methods=['POST'])
+def outlier_analysis():
+    try:
+        data = request.json
+        session_id = data.get('session_id')
+        z_threshold = float(data.get('z_threshold', 3.0))
+
+        if session_id not in active_datasets:
+            return jsonify({"error": "Session not found"}), 404
+
+        dataset = active_datasets[session_id]
+        df = pd.DataFrame(dataset['data'])
+        numeric_df = df.select_dtypes(include=[np.number]).copy()
+
+        if numeric_df.shape[1] < 1:
+            return jsonify({"error": "Need at least 1 numeric column for outlier analysis"}), 400
+
+        z_outlier_mask = pd.DataFrame(False, index=numeric_df.index, columns=numeric_df.columns)
+        outlier_summary = []
+
+        for col in numeric_df.columns:
+            series = pd.to_numeric(numeric_df[col], errors='coerce')
+            mean = series.mean()
+            std = series.std()
+            if pd.isna(std) or std == 0:
+                outlier_count = 0
+            else:
+                z_scores = ((series - mean).abs() / std)
+                col_mask = z_scores > z_threshold
+                z_outlier_mask[col] = col_mask.fillna(False)
+                outlier_count = int(col_mask.sum())
+
+            outlier_summary.append({
+                "column": col,
+                "outlier_count": outlier_count,
+                "outlier_percent": float((outlier_count / len(series)) * 100) if len(series) else 0.0
+            })
+
+        row_outlier_mask = z_outlier_mask.any(axis=1)
+        outlier_rows = df[row_outlier_mask].head(50).to_dict('records')
+
+        # IsolationForest gives a stronger row-level outlier signal across all numeric columns.
+        iso_rows = numeric_df.dropna()
+        isolation_summary = {"rows_scored": 0, "anomalies": 0, "anomaly_percent": 0.0}
+        if len(iso_rows) >= 10:
+            contamination = min(0.1, max(0.01, 10 / len(iso_rows)))
+            model = IsolationForest(random_state=42, contamination=contamination)
+            preds = model.fit_predict(iso_rows)
+            anomaly_count = int((preds == -1).sum())
+            isolation_summary = {
+                "rows_scored": int(len(iso_rows)),
+                "anomalies": anomaly_count,
+                "anomaly_percent": float((anomaly_count / len(iso_rows)) * 100)
+            }
+
+        results = {
+            "z_threshold": z_threshold,
+            "total_rows": int(len(df)),
+            "rows_with_any_outlier": int(row_outlier_mask.sum()),
+            "rows_with_any_outlier_percent": float((row_outlier_mask.sum() / len(df)) * 100) if len(df) else 0.0,
+            "column_summary": sorted(outlier_summary, key=lambda x: x["outlier_count"], reverse=True),
+            "sample_outlier_rows": outlier_rows,
+            "isolation_forest": isolation_summary
+        }
+
+        return jsonify(convert_numpy_types(results))
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/analyze/pca', methods=['POST'])
+def pca_analysis():
+    try:
+        data = request.json
+        session_id = data.get('session_id')
+        n_components = int(data.get('n_components', 2))
+
+        if session_id not in active_datasets:
+            return jsonify({"error": "Session not found"}), 404
+
+        dataset = active_datasets[session_id]
+        df = pd.DataFrame(dataset['data'])
+        numeric_df = df.select_dtypes(include=[np.number]).copy()
+
+        if numeric_df.shape[1] < 2:
+            return jsonify({"error": "Need at least 2 numeric columns for PCA"}), 400
+
+        clean_df = numeric_df.dropna()
+        if clean_df.shape[0] < 2:
+            return jsonify({"error": "Not enough valid rows for PCA after removing missing values"}), 400
+
+        n_components = max(2, min(n_components, clean_df.shape[1]))
+        scaler = StandardScaler()
+        scaled = scaler.fit_transform(clean_df.values)
+
+        pca = PCA(n_components=n_components, random_state=42)
+        components = pca.fit_transform(scaled)
+
+        plot_points = []
+        for i, point in enumerate(components[:300]):
+            plot_points.append({
+                "pc1": float(point[0]) if len(point) > 0 else 0.0,
+                "pc2": float(point[1]) if len(point) > 1 else 0.0,
+                "index": int(i)
+            })
+
+        loadings = []
+        for idx, col in enumerate(clean_df.columns):
+            loadings.append({
+                "column": col,
+                "pc1_loading": float(pca.components_[0][idx]) if pca.components_.shape[0] > 0 else 0.0,
+                "pc2_loading": float(pca.components_[1][idx]) if pca.components_.shape[0] > 1 else 0.0
+            })
+
+        results = {
+            "columns_used": clean_df.columns.tolist(),
+            "rows_used": int(clean_df.shape[0]),
+            "n_components": int(n_components),
+            "explained_variance_ratio": [float(x) for x in pca.explained_variance_ratio_],
+            "cumulative_explained_variance": float(np.sum(pca.explained_variance_ratio_)),
+            "points": plot_points,
+            "feature_loadings": loadings
+        }
+
+        return jsonify(convert_numpy_types(results))
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
