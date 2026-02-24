@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+﻿from flask import Flask, request, jsonify
 from flask_cors import CORS
 import pandas as pd
 import numpy as np
@@ -10,7 +10,6 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
-import dask.dataframe as dd
 from datetime import datetime
 import traceback
 import os
@@ -110,17 +109,12 @@ def upload_file():
             file_size = file.tell()
             file.seek(0)
             
-            if file_size > 10 * 1024 * 1024:
-                df = dd.read_csv(file.stream)
-                df_computed = df.compute()
-                data = df_computed.to_dict('records')
-                columns = df_computed.columns.tolist()
-                dtypes = df_computed.dtypes.astype(str).to_dict()
-            else:
-                df = pd.read_csv(file.stream)
-                data = df.to_dict('records')
-                columns = df.columns.tolist()
-                dtypes = df.dtypes.astype(str).to_dict()
+            # Flask uploads are file-like streams; pandas can read them directly.
+            # Using pandas for both sizes avoids dask path/startswith errors.
+            df = pd.read_csv(file.stream, low_memory=False)
+            data = df.to_dict('records')
+            columns = df.columns.tolist()
+            dtypes = df.dtypes.astype(str).to_dict()
         
         elif file_extension == 'json':
             df = pd.read_json(file.stream)
