@@ -14,7 +14,9 @@
 </p>
 
 ---
+![hero image](Bigdatahero.png)
 
+---
 ## ✨ Key Features
 
 - 📁 **Smart Upload**: CSV/JSON upload with in-memory sessions
