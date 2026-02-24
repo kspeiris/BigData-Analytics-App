@@ -46,6 +46,15 @@
 - **Data/Compute**: In-memory sessions, optional Dask ecosystem libs
 
 ---
+## 📸 Screenshots
+![images](screenshots/image1.png)
+![images](screenshots/image2.png)
+![images](screenshots/image3.png)
+![images](screenshots/image4.png)
+![images](screenshots/image5.png)
+![images](screenshots/image6.png)
+
+---
 
 ## 🗂️ Project Structure
 
