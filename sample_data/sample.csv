@@ -1,0 +1,13 @@
+age,income,spending_score,country,category
+25,15000,39,USA,A
+35,25000,81,UK,B
+45,35000,6,Canada,A
+55,45000,77,USA,C
+30,55000,40,UK,B
+40,75000,76,Canada,A
+28,35000,25,USA,B
+50,80000,90,UK,C
+33,45000,45,Canada,A
+42,60000,88,USA,B
+29,48000,32,UK,A
+38,52000,65,Canada,C

@@ -1,0 +1,7 @@
+[
+  {"age": 25, "income": 15000, "spending_score": 39, "country": "USA", "category": "A"},
+  {"age": 35, "income": 25000, "spending_score": 81, "country": "UK", "category": "B"},
+  {"age": 45, "income": 35000, "spending_score": 6, "country": "Canada", "category": "A"},
+  {"age": 55, "income": 45000, "spending_score": 77, "country": "USA", "category": "C"},
+  {"age": 30, "income": 55000, "spending_score": 40, "country": "UK", "category": "B"}
+]
