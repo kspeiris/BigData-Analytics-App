@@ -15,6 +15,7 @@ from sklearn.ensemble import IsolationForest
 from datetime import datetime
 import traceback
 import os
+import warnings
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -558,6 +559,294 @@ def pca_analysis():
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+@app.route('/analyze/charts', methods=['POST'])
+def charts_analysis():
+    try:
+        data = request.json or {}
+        session_id = data.get('session_id')
+        filters = data.get('filters', {})
+
+        if session_id not in active_datasets:
+            return jsonify({"error": "Session not found"}), 404
+
+        dataset = active_datasets[session_id]
+        full_df = pd.DataFrame(dataset['data'])
+
+        if full_df.empty:
+            return jsonify({"error": "Dataset is empty"}), 400
+
+        def to_float_or_none(value):
+            if value is None or value == "":
+                return None
+            try:
+                return float(value)
+            except Exception:
+                return None
+
+        # Build filter metadata from full dataset
+        all_columns = full_df.columns.tolist()
+        all_numeric_cols = full_df.select_dtypes(include=[np.number]).columns.tolist()
+        all_categorical_cols = [c for c in all_columns if c not in all_numeric_cols]
+
+        numeric_filter_meta = []
+        for col in all_numeric_cols:
+            series = pd.to_numeric(full_df[col], errors='coerce').dropna()
+            if len(series) == 0:
+                continue
+            numeric_filter_meta.append({
+                "column": col,
+                "min": float(series.min()),
+                "max": float(series.max())
+            })
+
+        categorical_filter_meta = []
+        for col in all_categorical_cols:
+            values = (
+                full_df[col]
+                .astype(str)
+                .replace("nan", np.nan)
+                .dropna()
+                .value_counts()
+                .head(30)
+                .index
+                .tolist()
+            )
+            if values:
+                categorical_filter_meta.append({"column": col, "values": [str(v) for v in values]})
+
+        date_filter_meta = []
+        for col in all_columns:
+            if col in all_numeric_cols:
+                continue
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", category=UserWarning)
+                parsed = pd.to_datetime(full_df[col], errors='coerce', utc=True)
+            valid = parsed.dropna()
+            if len(valid) >= max(5, int(len(full_df) * 0.4)):
+                date_filter_meta.append({
+                    "column": col,
+                    "min": valid.min().date().isoformat(),
+                    "max": valid.max().date().isoformat()
+                })
+
+        # Apply filters to create a linked filtered dataframe for all charts
+        df = full_df.copy()
+
+        range_filter = filters.get("range", {}) if isinstance(filters, dict) else {}
+        range_col = range_filter.get("column")
+        if range_col in df.columns:
+            series = pd.to_numeric(df[range_col], errors='coerce')
+            min_val = to_float_or_none(range_filter.get("min"))
+            max_val = to_float_or_none(range_filter.get("max"))
+            if min_val is not None:
+                df = df[series >= min_val]
+            if max_val is not None:
+                df = df[pd.to_numeric(df[range_col], errors='coerce') <= max_val]
+
+        category_filter = filters.get("category", {}) if isinstance(filters, dict) else {}
+        cat_col = category_filter.get("column")
+        cat_val = category_filter.get("value")
+        if cat_col in df.columns and cat_val not in [None, "", "ALL"]:
+            df = df[df[cat_col].astype(str) == str(cat_val)]
+
+        date_filter = filters.get("date", {}) if isinstance(filters, dict) else {}
+        date_col = date_filter.get("column")
+        if date_col in df.columns:
+            parsed = pd.to_datetime(df[date_col], errors='coerce', utc=True)
+            start = date_filter.get("start")
+            end = date_filter.get("end")
+            if start:
+                start_dt = pd.to_datetime(start, errors='coerce', utc=True)
+                if pd.notna(start_dt):
+                    df = df[parsed >= start_dt]
+                    parsed = pd.to_datetime(df[date_col], errors='coerce', utc=True)
+            if end:
+                end_dt = pd.to_datetime(end, errors='coerce', utc=True)
+                if pd.notna(end_dt):
+                    df = df[parsed <= end_dt]
+
+        if df.empty:
+            return jsonify({
+                "summary": {
+                    "rows": 0,
+                    "columns": int(len(all_columns)),
+                    "numeric_columns": int(len(all_numeric_cols)),
+                    "categorical_columns": int(len(all_categorical_cols)),
+                    "total_missing_cells": 0,
+                    "rows_before_filter": int(len(full_df)),
+                    "rows_after_filter": 0
+                },
+                "missing_values": [],
+                "distributions": [],
+                "boxplot_stats": [],
+                "correlation": {"columns": [], "matrix": []},
+                "scatter_pairs": [],
+                "categorical_breakdown": [],
+                "trend_series": [],
+                "pca_variance": [],
+                "filter_metadata": {
+                    "numeric_columns": numeric_filter_meta,
+                    "categorical_columns": categorical_filter_meta,
+                    "date_columns": date_filter_meta
+                }
+            })
+
+        rows = int(len(df))
+        columns = df.columns.tolist()
+        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+        categorical_cols = [c for c in columns if c not in numeric_cols]
+
+        # Missing value profile
+        missing_values = []
+        for col in columns:
+            missing = int(df[col].isna().sum())
+            missing_values.append({
+                "column": col,
+                "missing": missing,
+                "missing_percent": float((missing / rows) * 100) if rows else 0.0
+            })
+        missing_values = sorted(missing_values, key=lambda x: x["missing"], reverse=True)
+
+        # Numeric distributions (histogram bins)
+        distributions = []
+        for col in numeric_cols[:6]:
+            series = pd.to_numeric(df[col], errors='coerce').dropna()
+            if len(series) < 2:
+                continue
+            counts, edges = np.histogram(series.values, bins=12)
+            bins = []
+            for i in range(len(counts)):
+                bins.append({
+                    "start": float(edges[i]),
+                    "end": float(edges[i + 1]),
+                    "count": int(counts[i]),
+                    "label": f"{edges[i]:.2f} - {edges[i + 1]:.2f}"
+                })
+            distributions.append({
+                "column": col,
+                "bins": bins
+            })
+
+        # Box plot stats
+        boxplot_stats = []
+        for col in numeric_cols[:10]:
+            series = pd.to_numeric(df[col], errors='coerce').dropna()
+            if len(series) < 2:
+                continue
+            boxplot_stats.append({
+                "column": col,
+                "min": float(series.min()),
+                "q1": float(series.quantile(0.25)),
+                "median": float(series.median()),
+                "q3": float(series.quantile(0.75)),
+                "max": float(series.max()),
+                "mean": float(series.mean()),
+                "std": float(series.std()) if len(series) > 1 else 0.0
+            })
+
+        # Correlation matrix (chart-friendly rows)
+        correlation = {"columns": [], "matrix": []}
+        if len(numeric_cols) >= 2:
+            corr_df = df[numeric_cols[:10]].corr().round(4)
+            correlation = {
+                "columns": corr_df.columns.tolist(),
+                "matrix": [[float(x) for x in row] for row in corr_df.values]
+            }
+
+        # Scatter pairs (sampled)
+        scatter_pairs = []
+        if len(numeric_cols) >= 2:
+            candidate_cols = numeric_cols[:5]
+            pair_count = 0
+            for i in range(len(candidate_cols)):
+                for j in range(i + 1, len(candidate_cols)):
+                    if pair_count >= 4:
+                        break
+                    x_col = candidate_cols[i]
+                    y_col = candidate_cols[j]
+                    pair_df = df[[x_col, y_col]].dropna().head(500)
+                    points = []
+                    for _, r in pair_df.iterrows():
+                        points.append({"x": float(r[x_col]), "y": float(r[y_col])})
+                    scatter_pairs.append({
+                        "x_column": x_col,
+                        "y_column": y_col,
+                        "points": points
+                    })
+                    pair_count += 1
+                if pair_count >= 4:
+                    break
+
+        # Categorical distributions
+        categorical_breakdown = []
+        for col in categorical_cols[:6]:
+            value_counts = df[col].astype(str).value_counts().head(8)
+            values = []
+            for idx, val in value_counts.items():
+                values.append({"category": str(idx), "count": int(val)})
+            categorical_breakdown.append({
+                "column": col,
+                "values": values
+            })
+
+        # Trend lines for first few numeric columns (sampled index)
+        trend_series = []
+        for col in numeric_cols[:3]:
+            series = pd.to_numeric(df[col], errors='coerce')
+            valid = series.dropna()
+            if len(valid) < 2:
+                continue
+            sampled = valid.head(300)
+            points = [{"index": int(i), "value": float(v)} for i, v in enumerate(sampled.values)]
+            trend_series.append({"column": col, "points": points})
+
+        # PCA variance quick view
+        pca_variance = []
+        if len(numeric_cols) >= 2:
+            pca_df = df[numeric_cols].dropna()
+            if len(pca_df) >= 2:
+                scaler = StandardScaler()
+                scaled = scaler.fit_transform(pca_df.values)
+                comps = min(5, pca_df.shape[1])
+                pca = PCA(n_components=comps, random_state=42)
+                pca.fit(scaled)
+                for i, v in enumerate(pca.explained_variance_ratio_):
+                    pca_variance.append({
+                        "component": f"PC{i + 1}",
+                        "variance": float(v),
+                        "variance_percent": float(v * 100)
+                    })
+
+        payload = {
+            "summary": {
+                "rows": rows,
+                "columns": int(len(columns)),
+                "numeric_columns": int(len(numeric_cols)),
+                "categorical_columns": int(len(categorical_cols)),
+                "total_missing_cells": int(df.isna().sum().sum()),
+                "rows_before_filter": int(len(full_df)),
+                "rows_after_filter": rows
+            },
+            "missing_values": missing_values,
+            "distributions": distributions,
+            "boxplot_stats": boxplot_stats,
+            "correlation": correlation,
+            "scatter_pairs": scatter_pairs,
+            "categorical_breakdown": categorical_breakdown,
+            "trend_series": trend_series,
+            "pca_variance": pca_variance,
+            "filter_metadata": {
+                "numeric_columns": numeric_filter_meta,
+                "categorical_columns": categorical_filter_meta,
+                "date_columns": date_filter_meta
+            }
+        }
+
+        return jsonify(convert_numpy_types(payload))
+
+    except Exception as e:
+        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
 
 @app.route('/debug/dataset', methods=['POST'])
 def debug_dataset():
