@@ -47,7 +47,7 @@ const FileUpload = ({ onUploadSuccess }) => {
       <div className="card">
         <div className="card-header">
           <h2>Upload Data File</h2>
-          <p className="subtitle">Supported formats: CSV, JSON (Max 100MB)</p>
+          <p className="subtitle">Supported formats: CSV, JSON (CSV up to 2GB, heavy analyses use sampling)</p>
         </div>
 
         <div {...getRootProps()} className={`upload-zone ${isDragActive ? 'active' : ''}`}>

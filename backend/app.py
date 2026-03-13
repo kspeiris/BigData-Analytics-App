@@ -5,6 +5,8 @@ import numpy as np
 import json
 import io
 import base64
+import shutil
+import dask.dataframe as dd
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -19,6 +21,14 @@ import warnings
 from dotenv import load_dotenv
 
 load_dotenv()
+
+MAX_UPLOAD_GB = float(os.getenv('MAX_UPLOAD_GB', '2'))
+UPLOAD_ROOT = os.path.join(os.path.dirname(__file__), 'session_uploads')
+MAX_SAMPLE_ROWS = int(os.getenv('MAX_SAMPLE_ROWS', '20000'))
+MAX_SCATTER_POINTS = int(os.getenv('MAX_SCATTER_POINTS', '20000'))
+MAX_TREND_POINTS = int(os.getenv('MAX_TREND_POINTS', '10000'))
+MAX_CHART_SAMPLE_ROWS = int(os.getenv('MAX_CHART_SAMPLE_ROWS', '50000'))
+os.makedirs(UPLOAD_ROOT, exist_ok=True)
 
 class NumpyEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -42,7 +52,7 @@ app = Flask(__name__)
 app.json_encoder = NumpyEncoder
 CORS(app)
 
-app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024
+app.config['MAX_CONTENT_LENGTH'] = int(MAX_UPLOAD_GB * 1024 * 1024 * 1024)
 
 active_datasets = {}
 
@@ -69,6 +79,63 @@ def convert_numpy_types(obj):
     else:
         return obj
 
+
+def create_session_directory(session_id):
+    path = os.path.join(UPLOAD_ROOT, session_id)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def save_uploaded_file(file_storage, session_id, extension):
+    directory = create_session_directory(session_id)
+    file_path = os.path.join(directory, f'dataset.{extension}')
+    file_storage.save(file_path)
+    return file_path
+
+
+def remove_session_files(session_id):
+    shutil.rmtree(os.path.join(UPLOAD_ROOT, session_id), ignore_errors=True)
+
+
+def load_dataframe(dataset, columns=None, nrows=None):
+    file_type = dataset.get('file_type')
+    file_path = dataset.get('file_path')
+
+    if file_path:
+        if file_type == 'csv':
+            return pd.read_csv(file_path, usecols=columns, nrows=nrows, low_memory=False)
+        df = pd.read_json(file_path)
+        if columns:
+            df = df[columns]
+        if nrows is not None:
+            df = df.head(nrows)
+        return df
+
+    if 'dataframe' in dataset:
+        df = dataset['dataframe']
+    else:
+        df = pd.DataFrame(dataset['data'])
+    if columns:
+        df = df[columns]
+    if nrows is not None:
+        df = df.head(nrows)
+    return df
+
+
+def load_dask_dataframe(dataset):
+    if dataset.get('file_type') != 'csv' or not dataset.get('file_path'):
+        return None
+    return dd.read_csv(dataset['file_path'], assume_missing=True, blocksize='64MB')
+
+
+def get_sampled_dataframe(dataset, columns=None, limit=MAX_SAMPLE_ROWS):
+    if dataset.get('file_type') == 'csv' and dataset.get('file_path'):
+        ddf = load_dask_dataframe(dataset)
+        if columns:
+            ddf = ddf[columns]
+        return ddf.head(limit, npartitions=-1)
+    return load_dataframe(dataset, columns=columns, nrows=limit)
+
 def cleanup_old_sessions():
     """Remove sessions older than 1 hour"""
     current_time = datetime.now()
@@ -81,6 +148,7 @@ def cleanup_old_sessions():
     
     for session_id in sessions_to_remove:
         del active_datasets[session_id]
+        remove_session_files(session_id)
 
 @app.route('/health', methods=['GET'])
 def health_check():
@@ -104,31 +172,31 @@ def upload_file():
 
         file_extension = file.filename.lower().split('.')[-1]
         
-        if file_extension == 'csv':
-            file.seek(0, 2)
-            file_size = file.tell()
-            file.seek(0)
-            
-            df = pd.read_csv(file.stream, low_memory=False)
-            data = df.to_dict('records')
-            columns = df.columns.tolist()
-            dtypes = df.dtypes.astype(str).to_dict()
-        
-        elif file_extension == 'json':
-            df = pd.read_json(file.stream)
-            data = df.to_dict('records')
-            columns = df.columns.tolist()
-            dtypes = df.dtypes.astype(str).to_dict()
-        
-        else:
+        if file_extension not in ['csv', 'json']:
             return jsonify({"error": "Unsupported file format. Use CSV or JSON"}), 400
 
         session_id = datetime.now().strftime("%Y%m%d%H%M%S%f")
+        file_path = save_uploaded_file(file, session_id, file_extension)
+        file_size = os.path.getsize(file_path)
+
+        if file_extension == 'csv':
+            ddf = load_dask_dataframe({'file_type': 'csv', 'file_path': file_path})
+            columns = ddf.columns.tolist()
+            dtypes = ddf.dtypes.astype(str).to_dict()
+            df = ddf.head(min(5000, MAX_SAMPLE_ROWS), npartitions=-1)
+            total_rows = int(ddf.map_partitions(len).sum().compute())
+        else:
+            df = pd.read_json(file_path)
+            columns = df.columns.tolist()
+            dtypes = df.dtypes.astype(str).to_dict()
+            total_rows = int(len(df))
+
         active_datasets[session_id] = {
-            'data': data,
+            'file_path': file_path,
+            'file_type': file_extension,
             'columns': columns,
             'dtypes': dtypes,
-            'dataframe': df,
+            'rows': total_rows,
             'upload_time': datetime.now().isoformat()
         }
 
@@ -160,13 +228,15 @@ def upload_file():
             "session_id": session_id,
             "message": "File uploaded successfully",
             "summary": convert_numpy_types({
-                "rows": len(df),
+                "rows": total_rows,
                 "columns": columns,
                 "numeric_columns": numeric_columns,
                 "categorical_columns": categorical_columns,
                 "basic_stats": basic_stats,
                 "categorical_stats": categorical_stats,
-                "file_size": len(str(data))
+                "file_size": int(file_size),
+                "stored_on_disk": True,
+                "sampled_summary": total_rows > len(df)
             })
         }
 
@@ -185,10 +255,27 @@ def basic_analysis():
             return jsonify({"error": "Session not found"}), 404
         
         dataset = active_datasets[session_id]
-        df = pd.DataFrame(dataset['data'])
-        
+        if dataset.get('file_type') == 'csv' and dataset.get('file_path'):
+            ddf = load_dask_dataframe(dataset)
+            description_source = ddf.describe().compute()
+            description_iter = description_source.to_dict().items()
+            missing_values = {k: int(v) for k, v in ddf.isnull().sum().compute().to_dict().items()}
+            data_types = dataset['dtypes']
+            memory_usage = int(os.path.getsize(dataset['file_path']))
+            row_count = int(dataset.get('rows') or ddf.map_partitions(len).sum().compute())
+            column_count = len(dataset['columns'])
+        else:
+            df = load_dataframe(dataset)
+            description_source = df.describe()
+            description_iter = description_source.to_dict().items()
+            missing_values = {k: int(v) for k, v in df.isnull().sum().to_dict().items()}
+            data_types = df.dtypes.astype(str).to_dict()
+            memory_usage = int(df.memory_usage(deep=True).sum())
+            row_count = int(df.shape[0])
+            column_count = int(df.shape[1])
+
         description_dict = {}
-        for col, stats in df.describe().to_dict().items():
+        for col, stats in description_iter:
             description_dict[col] = {}
             for stat, val in stats.items():
                 if isinstance(val, (np.integer, np.int64, np.int32)):
@@ -199,11 +286,11 @@ def basic_analysis():
                     description_dict[col][stat] = val
         
         analysis_results = {
-            "shape": {"rows": int(df.shape[0]), "columns": int(df.shape[1])},
-            "missing_values": {k: int(v) for k, v in df.isnull().sum().to_dict().items()},
-            "data_types": df.dtypes.astype(str).to_dict(),
+            "shape": {"rows": row_count, "columns": column_count},
+            "missing_values": missing_values,
+            "data_types": data_types,
             "description": description_dict,
-            "memory_usage": int(df.memory_usage(deep=True).sum())
+            "memory_usage": memory_usage
         }
         
         return jsonify(convert_numpy_types(analysis_results))
@@ -221,9 +308,13 @@ def correlation_analysis():
             return jsonify({"error": "Session not found"}), 404
         
         dataset = active_datasets[session_id]
-        df = pd.DataFrame(dataset['data'])
-        
-        numeric_df = df.select_dtypes(include=[np.number])
+        if dataset.get('file_type') == 'csv' and dataset.get('file_path'):
+            ddf = load_dask_dataframe(dataset)
+            numeric_columns = ddf.select_dtypes(include=[np.number]).columns.tolist()
+            numeric_df = ddf[numeric_columns[:20]].compute() if numeric_columns else pd.DataFrame()
+        else:
+            df = load_dataframe(dataset)
+            numeric_df = df.select_dtypes(include=[np.number])
         
         if numeric_df.shape[1] < 2:
             return jsonify({"error": "Need at least 2 numeric columns for correlation"}), 400
@@ -266,7 +357,7 @@ def clustering_analysis():
             return jsonify({"error": "Session not found"}), 404
         
         dataset = active_datasets[session_id]
-        df = pd.DataFrame(dataset['data'])
+        df = get_sampled_dataframe(dataset, limit=MAX_SAMPLE_ROWS)
         
         if not columns:
             numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
@@ -275,7 +366,7 @@ def clustering_analysis():
         if len(columns) < 2:
             return jsonify({"error": "Need at least 2 numeric columns for clustering"}), 400
         
-        X = df[columns].dropna().values
+        X = df[columns].dropna().head(MAX_SAMPLE_ROWS).values
         
         if len(X) < n_clusters:
             return jsonify({"error": "Not enough data points for clustering"}), 400
@@ -299,7 +390,9 @@ def clustering_analysis():
             "clusters": [int(x) for x in clusters],
             "centers": centers,
             "data_points": data_points,
-            "inertia": float(kmeans.inertia_)
+            "inertia": float(kmeans.inertia_),
+            "sampled_rows": int(len(X)),
+            "total_rows": int(dataset.get('rows', len(df)))
         }
         
         return jsonify(results)
@@ -315,16 +408,11 @@ def scatter_plot():
         x_col = data.get('x_column')
         y_col = data.get('y_column')
         
-        print(f"Scatter plot request: session_id={session_id}, x_col={x_col}, y_col={y_col}")
-        
         if session_id not in active_datasets:
             return jsonify({"error": "Session not found"}), 404
         
         dataset = active_datasets[session_id]
-        df = pd.DataFrame(dataset['data'])
-        
-        print(f"Available columns: {df.columns.tolist()}")
-        print(f"Data types: {df.dtypes.to_dict()}")
+        df = get_sampled_dataframe(dataset, columns=[x_col, y_col], limit=MAX_SCATTER_POINTS)
         
         if x_col not in df.columns:
             return jsonify({"error": f"X column '{x_col}' not found in dataset"}), 400
@@ -341,10 +429,8 @@ def scatter_plot():
         if len(plot_data) == 0:
             return jsonify({"error": "No valid data points after removing missing values"}), 400
         
-        print(f"Plotting {len(plot_data)} data points")
-        
         plt.figure(figsize=(10, 6))
-        plt.scatter(plot_data[x_col], plot_data[y_col], alpha=0.6, s=50)
+        plt.scatter(plot_data[x_col], plot_data[y_col], alpha=0.45, s=12)
         plt.xlabel(x_col, fontsize=12)
         plt.ylabel(y_col, fontsize=12)
         plt.title(f'{y_col} vs {x_col}', fontsize=14)
@@ -359,12 +445,12 @@ def scatter_plot():
         
         return jsonify({
             "image": f"data:image/png;base64,{img_base64}",
-            "message": f"Scatter plot created with {len(plot_data)} points"
+            "message": f"Scatter plot created with {len(plot_data)} sampled points",
+            "sampled_points": int(len(plot_data)),
+            "total_rows": int(dataset.get('rows', len(plot_data)))
         })
     
     except Exception as e:
-        print(f"Scatter plot error: {str(e)}")
-        print(traceback.format_exc())
         return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
 
 @app.route('/analyze/trend', methods=['POST'])
@@ -378,7 +464,7 @@ def trend_analysis():
             return jsonify({"error": "Session not found"}), 404
         
         dataset = active_datasets[session_id]
-        df = pd.DataFrame(dataset['data'])
+        df = get_sampled_dataframe(dataset, columns=[column], limit=MAX_TREND_POINTS)
         
         if column not in df.columns:
             return jsonify({"error": "Column not found"}), 400
@@ -398,7 +484,9 @@ def trend_analysis():
             "slope": float(slope),
             "intercept": float(intercept),
             "trend_direction": "increasing" if slope > 0 else "decreasing",
-            "correlation": float(np.corrcoef(x, series.values)[0, 1])
+            "correlation": float(np.corrcoef(x, series.values)[0, 1]),
+            "sampled_rows": int(len(series)),
+            "total_rows": int(dataset.get('rows', len(series)))
         }
         
         return jsonify(results)
@@ -417,7 +505,7 @@ def outlier_analysis():
             return jsonify({"error": "Session not found"}), 404
 
         dataset = active_datasets[session_id]
-        df = pd.DataFrame(dataset['data'])
+        df = get_sampled_dataframe(dataset, limit=MAX_SAMPLE_ROWS)
         numeric_df = df.select_dtypes(include=[np.number]).copy()
 
         if numeric_df.shape[1] < 1:
@@ -462,7 +550,8 @@ def outlier_analysis():
 
         results = {
             "z_threshold": z_threshold,
-            "total_rows": int(len(df)),
+            "total_rows": int(dataset.get('rows', len(df))),
+            "sampled_rows": int(len(df)),
             "rows_with_any_outlier": int(row_outlier_mask.sum()),
             "rows_with_any_outlier_percent": float((row_outlier_mask.sum() / len(df)) * 100) if len(df) else 0.0,
             "column_summary": sorted(outlier_summary, key=lambda x: x["outlier_count"], reverse=True),
@@ -486,7 +575,7 @@ def pca_analysis():
             return jsonify({"error": "Session not found"}), 404
 
         dataset = active_datasets[session_id]
-        df = pd.DataFrame(dataset['data'])
+        df = get_sampled_dataframe(dataset, limit=MAX_SAMPLE_ROWS)
         numeric_df = df.select_dtypes(include=[np.number]).copy()
 
         if numeric_df.shape[1] < 2:
@@ -522,6 +611,7 @@ def pca_analysis():
         results = {
             "columns_used": clean_df.columns.tolist(),
             "rows_used": int(clean_df.shape[0]),
+            "total_rows": int(dataset.get('rows', len(df))),
             "n_components": int(n_components),
             "explained_variance_ratio": [float(x) for x in pca.explained_variance_ratio_],
             "cumulative_explained_variance": float(np.sum(pca.explained_variance_ratio_)),
@@ -545,7 +635,7 @@ def charts_analysis():
             return jsonify({"error": "Session not found"}), 404
 
         dataset = active_datasets[session_id]
-        full_df = pd.DataFrame(dataset['data'])
+        full_df = get_sampled_dataframe(dataset, limit=MAX_CHART_SAMPLE_ROWS)
 
         if full_df.empty:
             return jsonify({"error": "Dataset is empty"}), 400
@@ -646,7 +736,7 @@ def charts_analysis():
                     "numeric_columns": int(len(all_numeric_cols)),
                     "categorical_columns": int(len(all_categorical_cols)),
                     "total_missing_cells": 0,
-                    "rows_before_filter": int(len(full_df)),
+                    "rows_before_filter": int(dataset.get('rows', len(full_df))),
                     "rows_after_filter": 0
                 },
                 "missing_values": [],
@@ -789,8 +879,9 @@ def charts_analysis():
                 "numeric_columns": int(len(numeric_cols)),
                 "categorical_columns": int(len(categorical_cols)),
                 "total_missing_cells": int(df.isna().sum().sum()),
-                "rows_before_filter": int(len(full_df)),
-                "rows_after_filter": rows
+                "rows_before_filter": int(dataset.get('rows', len(full_df))),
+                "rows_after_filter": rows,
+                "sampled_rows": int(len(full_df))
             },
             "missing_values": missing_values,
             "distributions": distributions,
@@ -804,7 +895,8 @@ def charts_analysis():
                 "numeric_columns": numeric_filter_meta,
                 "categorical_columns": categorical_filter_meta,
                 "date_columns": date_filter_meta
-            }
+            },
+            "sampling_note": "Charts are generated from a bounded sample for large datasets."
         }
 
         return jsonify(convert_numpy_types(payload))
@@ -822,13 +914,13 @@ def debug_dataset():
             return jsonify({"error": "Session not found"}), 404
         
         dataset = active_datasets[session_id]
-        df = pd.DataFrame(dataset['data'])
+        df = get_sampled_dataframe(dataset, limit=3)
         
         debug_info = {
-            "columns": df.columns.tolist(),
-            "dtypes": df.dtypes.astype(str).to_dict(),
+            "columns": dataset.get('columns', df.columns.tolist()),
+            "dtypes": dataset.get('dtypes', df.dtypes.astype(str).to_dict()),
             "numeric_columns": df.select_dtypes(include=[np.number]).columns.tolist(),
-            "shape": df.shape,
+            "shape": [int(dataset.get('rows', len(df))), int(len(dataset.get('columns', df.columns.tolist())))],
             "sample_data": df.head(3).to_dict('records')
         }
         
@@ -845,6 +937,7 @@ def clear_session():
         
         if session_id in active_datasets:
             del active_datasets[session_id]
+            remove_session_files(session_id)
             return jsonify({"message": "Session cleared successfully"})
         else:
             return jsonify({"error": "Session not found"}), 404
