@@ -9,6 +9,16 @@ import {
   YAxis,
 } from 'recharts';
 import api from '../services/api';
+import {
+  BasicAnalysisIcon,
+  ClusteringIcon,
+  CorrelationIcon,
+  InspectorIcon,
+  OutlierIcon,
+  PcaIcon,
+  ScatterIcon,
+  TrendIcon,
+} from './Icons';
 
 const AnalysisTools = ({ sessionId, analysis }) => {
   const [toolsLoading, setToolsLoading] = useState(false);
@@ -117,7 +127,7 @@ const AnalysisTools = ({ sessionId, analysis }) => {
           <p className="section-subtitle">Fast, high-value checks for quick insight.</p>
           <div className="tools-grid">
             <div className="tool-card">
-              <div className="tool-icon">BA</div>
+              <div className="tool-icon"><BasicAnalysisIcon /></div>
               <h3>Basic Analysis</h3>
               <p>Shape, types, nulls and memory usage.</p>
               <button onClick={() => runAnalysis('/analyze/basic', 'Basic Analysis')} disabled={toolsLoading} className="btn btn-primary">
@@ -145,7 +155,7 @@ const AnalysisTools = ({ sessionId, analysis }) => {
             </div>
 
             <div className="tool-card">
-              <div className="tool-icon">CM</div>
+              <div className="tool-icon"><CorrelationIcon /></div>
               <h3>Correlation Matrix</h3>
               <p>Find strongest numeric relationships.</p>
               <button onClick={() => runAnalysis('/analyze/correlation', 'Correlation Analysis')} disabled={toolsLoading} className="btn btn-success">
@@ -175,7 +185,7 @@ const AnalysisTools = ({ sessionId, analysis }) => {
             </div>
 
             <div className="tool-card">
-              <div className="tool-icon">SP</div>
+              <div className="tool-icon"><ScatterIcon /></div>
               <h3>Scatter Plot</h3>
               <p>Visual check for pairwise patterns.</p>
               <button
@@ -204,7 +214,7 @@ const AnalysisTools = ({ sessionId, analysis }) => {
             </div>
 
             <div className="tool-card">
-              <div className="tool-icon">KM</div>
+              <div className="tool-icon"><ClusteringIcon /></div>
               <h3>Clustering</h3>
               <p>K-means segmentation.</p>
               <div className="clustering-controls">
@@ -247,7 +257,7 @@ const AnalysisTools = ({ sessionId, analysis }) => {
             </div>
 
             <div className="tool-card">
-              <div className="tool-icon">DI</div>
+              <div className="tool-icon"><InspectorIcon /></div>
               <h3>Dataset Inspector</h3>
               <p>Quick structural debug snapshot.</p>
               <button onClick={() => runAnalysis('/debug/dataset', 'Debug Dataset')} disabled={toolsLoading} className="btn btn-secondary">
@@ -273,7 +283,7 @@ const AnalysisTools = ({ sessionId, analysis }) => {
             </div>
 
             <div className="tool-card">
-              <div className="tool-icon">TR</div>
+              <div className="tool-icon"><TrendIcon /></div>
               <h3>Trend Analysis</h3>
               <p>Direction and strength over index.</p>
               <div className="clustering-controls">
@@ -315,7 +325,7 @@ const AnalysisTools = ({ sessionId, analysis }) => {
           <p className="section-subtitle">Deeper diagnostics for anomalies and latent structure.</p>
           <div className="tools-grid advanced-grid">
             <div className="tool-card wide">
-              <div className="tool-icon">OD</div>
+              <div className="tool-icon"><OutlierIcon /></div>
               <h3>Outlier Detection</h3>
               <p>Z-score and Isolation Forest for anomaly detection.</p>
               <button
@@ -349,7 +359,7 @@ const AnalysisTools = ({ sessionId, analysis }) => {
             </div>
 
             <div className="tool-card wide">
-              <div className="tool-icon">PCA</div>
+              <div className="tool-icon"><PcaIcon /></div>
               <h3>PCA Analysis</h3>
               <p>Principal components and explained variance.</p>
               <button onClick={() => runAnalysis('/analyze/pca', 'PCA Analysis', { n_components: 2 })} disabled={toolsLoading} className="btn btn-primary">

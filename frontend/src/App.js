@@ -3,6 +3,7 @@ import FileUpload from './components/FileUpload';
 import DataSummary from './components/DataSummary';
 import AnalysisTools from './components/AnalysisTools';
 import AnalysisCharts from './components/AnalysisCharts';
+import { AnalysisIcon, ChartsIcon, OverviewIcon, UploadIcon } from './components/Icons';
 import './App.css';
 
 function App() {
@@ -58,7 +59,7 @@ function App() {
             onClick={() => setActiveTab('upload')}
             className={`nav-item ${activeTab === 'upload' ? 'active' : ''}`}
           >
-            <span className="nav-icon">U</span>
+            <span className="nav-icon"><UploadIcon /></span>
             <span className="nav-text">Upload</span>
           </button>
 
@@ -68,21 +69,21 @@ function App() {
                 onClick={() => setActiveTab('summary')}
                 className={`nav-item ${activeTab === 'summary' ? 'active' : ''}`}
               >
-                <span className="nav-icon">O</span>
+                <span className="nav-icon"><OverviewIcon /></span>
                 <span className="nav-text">Overview</span>
               </button>
               <button
                 onClick={() => setActiveTab('analysis')}
                 className={`nav-item ${activeTab === 'analysis' ? 'active' : ''}`}
               >
-                <span className="nav-icon">A</span>
+                <span className="nav-icon"><AnalysisIcon /></span>
                 <span className="nav-text">Analysis</span>
               </button>
               <button
                 onClick={() => setActiveTab('charts')}
                 className={`nav-item ${activeTab === 'charts' ? 'active' : ''}`}
               >
-                <span className="nav-icon">C</span>
+                <span className="nav-icon"><ChartsIcon /></span>
                 <span className="nav-text">Charts</span>
               </button>
             </>

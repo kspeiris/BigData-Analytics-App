@@ -122,9 +122,14 @@
   display: grid;
   place-items: center;
   border-radius: 999px;
-  font-size: 0.75rem;
-  font-weight: 800;
   background: rgba(255, 255, 255, 0.26);
+}
+
+.nav-icon svg,
+.upload-icon svg,
+.tool-icon svg {
+  width: 15px;
+  height: 15px;
 }
 
 .main-content {
@@ -187,12 +192,12 @@
 }
 
 .upload-icon {
-  font-size: 0.9rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
   color: #084ec4;
   background: #dbeeff;
-  padding: 0.45rem 0.75rem;
+  width: 52px;
+  height: 52px;
+  display: grid;
+  place-items: center;
   border-radius: 8px;
 }
 
@@ -391,15 +396,14 @@
 }
 
 .tool-icon {
-  width: fit-content;
+  width: 42px;
+  height: 42px;
   margin: 0 auto 1rem;
-  font-size: 0.78rem;
-  font-weight: 800;
-  letter-spacing: 0.05em;
   color: #0a4da3;
   background: #dbeeff;
   border: 1px solid #c1dcff;
-  padding: 0.28rem 0.55rem;
+  display: grid;
+  place-items: center;
   border-radius: 999px;
 }
 

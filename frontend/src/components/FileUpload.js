@@ -1,6 +1,7 @@
 import React, { useCallback, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 import api from '../services/api';
+import { DropIcon, FileIcon } from './Icons';
 
 const FileUpload = ({ onUploadSuccess }) => {
   const [loading, setLoading] = useState(false);
@@ -56,12 +57,12 @@ const FileUpload = ({ onUploadSuccess }) => {
               <div className="loading-spinner large"></div>
             ) : isDragActive ? (
               <>
-                <div className="upload-icon">DROP</div>
+                <div className="upload-icon"><DropIcon /></div>
                 <p>Drop the file here...</p>
               </>
             ) : (
               <>
-                <div className="upload-icon">FILE</div>
+                <div className="upload-icon"><FileIcon /></div>
                 <p>Drag and drop a file here, or click to select</p>
                 <small>Supports CSV and JSON files</small>
               </>
